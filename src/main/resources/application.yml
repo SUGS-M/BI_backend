@@ -87,3 +87,8 @@ cos:
     secretKey: xxx
     region: xxx
     bucket: xxx
+#toDo ChatGPT配置信息
+yuapi:
+  client:
+    access-key: wmg26m81b3bgbkad1is8wtdohsz2r6u3
+    secret-key: j8m0img8ak9l60bxwqr2p3u17wfq1cs9

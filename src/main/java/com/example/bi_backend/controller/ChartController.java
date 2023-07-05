@@ -11,10 +11,12 @@ import com.example.bi_backend.constant.CommonConstant;
 import com.example.bi_backend.constant.UserConstant;
 import com.example.bi_backend.exception.BusinessException;
 import com.example.bi_backend.exception.ThrowUtils;
+import com.example.bi_backend.manager.AiManager;
 import com.example.bi_backend.model.dto.chart.*;
 
 import com.example.bi_backend.model.entity.Chart;
 import com.example.bi_backend.model.entity.User;
+import com.example.bi_backend.model.vo.BiResponse;
 import com.example.bi_backend.service.ChartService;
 import com.example.bi_backend.service.UserService;
 import com.example.bi_backend.util.ExcelUtils;
@@ -44,6 +46,9 @@ public class ChartController {
 
     @Resource
     private UserService userService;
+    @Resource
+    private AiManager aiManager;
+
 
     private final static Gson GSON = new Gson();
 
@@ -213,7 +218,7 @@ public class ChartController {
      * @return
      */
     @PostMapping("/gen")
-    public BaseResponse<String> genChartByAi(@RequestPart("file") MultipartFile multipartFile,
+    public BaseResponse<BiResponse> genChartByAi(@RequestPart("file") MultipartFile multipartFile,
                                              GenChartByAiRequest genChartByAiRequest, HttpServletRequest request) {
         String name = genChartByAiRequest.getName();
         String goal = genChartByAiRequest.getGoal();
@@ -222,14 +227,65 @@ public class ChartController {
         ThrowUtils.throwIf(StringUtils.isBlank(goal), ErrorCode.PARAMS_ERROR, "目标为空");
         ThrowUtils.throwIf(StringUtils.isNotBlank(name) && name.length() > 100, ErrorCode.PARAMS_ERROR, "名称过长");
 
-        // 用户输入
+        //通过response对象拿到用户id
+        User loginUser = userService.getLoginUser(request);
+        long biModelId = 1659171950288818178L;
+        // 分析需求：
+        // 分析网站用户的增长情况
+        // 原始数据：
+        // 日期,用户数
+        // 1号,10
+        // 2号,20
+        // 3号,30
+        // 构造用户输入
         StringBuilder userInput = new StringBuilder();
-        userInput.append("你是一个数据分析师，接下来我会给你我的分析目标和原始数据，请告诉我分析结论。").append("\n");
-        userInput.append("分析目标：").append(goal).append("\n");
+        userInput.append("分析需求：").append("\n");
+        // 拼接分析目标
+        String userGoal = goal;
+        if (StringUtils.isNotBlank(chartType)) {
+            userGoal += "，请使用" + chartType;
+        }
+        userInput.append(userGoal).append("\n");
+        userInput.append("原始数据：").append("\n");
         // 压缩后的数据
-        String result = ExcelUtils.excelToCsv(multipartFile);
-        userInput.append("数据：").append(result).append("\n");
-        return ResultUtils.success(userInput.toString());
+        String csvData = ExcelUtils.excelToCsv(multipartFile);
+        userInput.append(csvData).append("\n");
+
+        String result = aiManager.doChat(biModelId, userInput.toString());
+        String[] splits = result.split("【【【【【");
+        if (splits.length < 3) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI 生成错误");
+        }
+        String genChart = splits[1].trim();
+        String genResult = splits[2].trim();
+        // 插入到数据库
+        Chart chart = new Chart();
+        chart.setName(name);
+        chart.setGoal(goal);
+        chart.setChartData(csvData);
+        chart.setChartType(chartType);
+        chart.setGenChart(genChart);
+        chart.setGenResult(genResult);
+        chart.setUserId(loginUser.getId());
+        boolean saveResult = chartService.save(chart);
+        ThrowUtils.throwIf(!saveResult, ErrorCode.SYSTEM_ERROR, "图表保存失败");
+        BiResponse biResponse = new BiResponse();
+        biResponse.setGenChart(genChart);
+        biResponse.setGenResult(genResult);
+        biResponse.setChartId(chart.getId());
+        return ResultUtils.success(biResponse);
+
+
+//        // 用户输入
+//        StringBuilder userInput = new StringBuilder();
+//        userInput.append("你是一个数据分析师，接下来我会给你我的分析目标和原始数据，请告诉我分析结论。").append("\n");
+//        userInput.append("分析目标：").append(goal).append("\n");
+//        // 压缩后的数据
+//        String result = ExcelUtils.excelToCsv(multipartFile);
+//        userInput.append("数据：").append(result).append("\n");
+//        return ResultUtils.success(userInput.toString());
+
+
 //
 //        // 读取到用户上传的 excel 文件，进行一个处理
 //        User loginUser = userService.getLoginUser(request);
